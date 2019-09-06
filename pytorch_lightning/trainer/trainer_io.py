@@ -1,9 +1,14 @@
 import os
 import re
 import signal
+import warnings
 from subprocess import call
 
 import torch
+try:
+    from apex import amp
+except ImportError:
+    pass
 
 from pytorch_lightning.pt_overrides.override_data_parallel import (
     LightningDistributedDataParallel, LightningDataParallel)
@@ -139,6 +144,17 @@ class TrainerIO(object):
             'global_step': self.global_step
         }
 
+        # save amp state
+        if self.use_amp:
+            try:
+                checkpoint['amp'] = amp.state_dict()
+            except Exception as e:
+                m = '''
+                your amp version does not support saving amp state.
+                update to the latest version to avoid nan outputs
+                '''
+                warnings.warn(m)
+
         if self.checkpoint_callback is not None:
             checkpoint['checkpoint_callback_best'] = self.checkpoint_callback.best
 
@@ -195,6 +211,16 @@ class TrainerIO(object):
         :param checkpoint:
         :return:
         """
+        if 'amp' in checkpoint:
+            try:
+                amp.load_state_dict(checkpoint['amp'])
+            except Exception as e:
+                m = '''
+                your amp version does not support loading amp state.
+                update to the latest version to avoid nan outputs
+                '''
+                warnings.warn(m)
+
         if self.checkpoint_callback is not None:
             self.checkpoint_callback.best = checkpoint['checkpoint_callback_best']
 
