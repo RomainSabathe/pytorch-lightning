@@ -20,7 +20,7 @@ class TrainerIO(object):
     # --------------------
     # CHECK-POINTING
     # --------------------
-    def restore_weights(self, model):
+    def restore_weights(self, model, epoch=None):
         """
         To restore weights we have two cases.
         First, if we use the same experiment version, then restore the latest ckpt.
@@ -29,12 +29,12 @@ class TrainerIO(object):
         :return:
         """
         # restore weights if same exp version
-        self.restore_state_if_checkpoint_exists(model)
+        self.restore_state_if_checkpoint_exists(model, epoch)
 
         # if script called from hpc resubmit, load weights
         self.restore_hpc_weights_if_needed(model)
 
-    def restore_state_if_checkpoint_exists(self, model):
+    def restore_state_if_checkpoint_exists(self, model, target_epoch):
         # do nothing if there's not dir or callback
         no_ckpt_callback = self.checkpoint_callback is None
         if no_ckpt_callback or not os.path.exists(self.checkpoint_callback.filepath):
@@ -55,7 +55,9 @@ class TrainerIO(object):
                 epoch = name.split('epoch_')[1]
                 epoch = int(re.sub('[^0-9]', '', epoch))
 
-                if epoch > last_epoch:
+                if (target_epoch is None and epoch > last_epoch) or (
+                    target_epoch is not None and epoch == target_epoch
+                ):
                     last_epoch = epoch
                     last_ckpt_name = name
 
@@ -64,6 +66,8 @@ class TrainerIO(object):
             last_ckpt_path = os.path.join(self.checkpoint_callback.filepath, last_ckpt_name)
             self.restore(last_ckpt_path, self.on_gpu)
             print(f'model and trainer restored from checkpoint: {last_ckpt_path}')
+        if last_ckpt_name is None and target_epoch is not None:
+            raise Exception(f"Couldn't find epoch {target_epoch}")
 
     # --------------------
     # HPC SIGNAL HANDLING
@@ -206,14 +210,24 @@ class TrainerIO(object):
         self.current_epoch = checkpoint['epoch']
 
         # restore the optimizers
-        optimizer_states = checkpoint['optimizer_states']
-        for optimizer, opt_state in zip(self.optimizers, optimizer_states):
-            optimizer.load_state_dict(opt_state)
+        if self.optimizers is None:
+            print(
+                "Warning: no optimizers found with this Trainer. Not restoring optimizers."
+            )
+        else:
+            optimizer_states = checkpoint['optimizer_states']
+            for optimizer, opt_state in zip(self.optimizers, optimizer_states):
+                optimizer.load_state_dict(opt_state)
 
         # restore the lr schedulers
-        lr_schedulers = checkpoint['lr_schedulers']
-        for scheduler, lrs_state in zip(self.lr_schedulers, lr_schedulers):
-            scheduler.load_state_dict(lrs_state)
+        if self.lr_schedulers is None:
+            print(
+                "Warning: no LR schedulers found with this Trainer. Not restoring LR schedulers."
+            )
+        else:
+            lr_schedulers = checkpoint['lr_schedulers']
+            for scheduler, lrs_state in zip(self.lr_schedulers, lr_schedulers):
+                scheduler.load_state_dict(lrs_state)
 
     # ----------------------------------
     # PRIVATE OPS
